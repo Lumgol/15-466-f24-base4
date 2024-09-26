@@ -1,21 +1,23 @@
 #include "PlayMode.hpp"
 
 #include "LitColorTextureProgram.hpp"
+#include "TextureProgram.hpp"
 
 #include "DrawLines.hpp"
 #include "Mesh.hpp"
 #include "Load.hpp"
 #include "gl_errors.hpp"
 #include "data_path.hpp"
+#include "load_save_png.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 
 #include <random>
 
-GLuint hexapod_meshes_for_lit_color_texture_program = 0;
+GLuint hexapod_meshes_for_texture_program = 0;
 Load< MeshBuffer > hexapod_meshes(LoadTagDefault, []() -> MeshBuffer const * {
 	MeshBuffer const *ret = new MeshBuffer(data_path("hexapod.pnct"));
-	hexapod_meshes_for_lit_color_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
+	hexapod_meshes_for_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
 	return ret;
 });
 
@@ -28,7 +30,7 @@ Load< Scene > hexapod_scene(LoadTagDefault, []() -> Scene const * {
 
 		drawable.pipeline = lit_color_texture_program_pipeline;
 
-		drawable.pipeline.vao = hexapod_meshes_for_lit_color_texture_program;
+		drawable.pipeline.vao = hexapod_meshes_for_texture_program;
 		drawable.pipeline.type = mesh.type;
 		drawable.pipeline.start = mesh.start;
 		drawable.pipeline.count = mesh.count;
@@ -36,160 +38,136 @@ Load< Scene > hexapod_scene(LoadTagDefault, []() -> Scene const * {
 	});
 });
 
-Load< Sound::Sample > dusty_floor_sample(LoadTagDefault, []() -> Sound::Sample const * {
-	return new Sound::Sample(data_path("dusty-floor.opus"));
-});
-
 PlayMode::PlayMode() : scene(*hexapod_scene) {
-	//get pointers to leg for convenience:
-	for (auto &transform : scene.transforms) {
-		if (transform.name == "Hip.FL") hip = &transform;
-		else if (transform.name == "UpperLeg.FL") upper_leg = &transform;
-		else if (transform.name == "LowerLeg.FL") lower_leg = &transform;
-	}
-	if (hip == nullptr) throw std::runtime_error("Hip not found.");
-	if (upper_leg == nullptr) throw std::runtime_error("Upper leg not found.");
-	if (lower_leg == nullptr) throw std::runtime_error("Lower leg not found.");
-
-	hip_base_rotation = hip->rotation;
-	upper_leg_base_rotation = upper_leg->rotation;
-	lower_leg_base_rotation = lower_leg->rotation;
 
 	//get pointer to camera for convenience:
 	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
 	camera = &scene.cameras.front();
+	// init rooms
+	Room intro_room;
+	intro_room.descriptions = {
+		"The mages must tend to too many emergencies at once, \n so they have left you in charge of preparing the ingredients \nfor the spell that is supposed to heal your friend's injury. \nThis is a dubious decision, as you are not a mage, but apparently, \nthe instructions for doing this are \"straightforward\" and \"doable\", \nor, they would be, but the instructions are written in the mages'\narcane tongue, which you know very little of.\n\nPress 1 to start making the best of this situation..."
+	};
+	Room kitchen;
+	kitchen.descriptions = {
+		"You stare at the note that the mages told you contains the spell instructions.\nYou're sure you can reason this out.\n\n\"Place ", 
+		translated_words[0][translation_idxs[0]], " in a ", translated_words[1][translation_idxs[1]], 
+		". Add ", translated_words[2][translation_idxs[2]] , " ", translated_words[3][translation_idxs[3]], ", ", 
+				  translated_words[2][translation_idxs[2]] , " ", translated_words[4][translation_idxs[4]], 
+				  ", and some ", translated_words[4][translation_idxs[4]], " to the ", translated_words[0][translation_idxs[0]], 
+		".\nPlace the ", translated_words[1][translation_idxs[1]], " onto the ", translated_words[5][translation_idxs[5]],
+		". ", translated_words[6][translation_idxs[6]], " the ", translated_words[5][translation_idxs[5]],
+		".\"\n\nPress a number key to investigate each purple word."
+	};
+	kitchen.image_paths.emplace_back(data_path("recipe.png"));
+	intro_room.neighbor_idxs.emplace_back(1);
 
-	//start music loop playing:
-	// (note: position will be over-ridden in update())
-	leg_tip_loop = Sound::loop_3D(*dusty_floor_sample, 1.0f, get_leg_tip_position(), 10.0f);
+	Room water;
+	water.descriptions = {
+		"You find this symbol on a label attached to two large barrels.\nIf you open up the lids, you can see water in them...\n...unless it's a secret other clear odorless liquid.\n\nWhat do you think the symbol means?\n1. Barrel\n2. Water\n3. Secret other liquid"
+	};
+	water.translates = 0;
+	kitchen.neighbor_idxs.emplace_back(2);
+	water.neighbor_idxs.emplace_back(1);
+	water.neighbor_idxs.emplace_back(1);
+	water.neighbor_idxs.emplace_back(1);
+
+	all_rooms.emplace_back(intro_room);
+	all_rooms.emplace_back(kitchen);
+	all_rooms.emplace_back(water);
+
+	// float height = 0.9;
+	for (const char *description : intro_room.descriptions) {
+		std::vector<tex_struct> curr_textures = test_harfbuzz(description, 0, 0);
+		glyph_textures.insert(glyph_textures.end(), curr_textures.begin(), curr_textures.end());
+		// height -= 0.08;
+	}
 }
 
 PlayMode::~PlayMode() {
 }
 
 bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
+	int8_t next_room_idx = -1;
 
-	if (evt.type == SDL_KEYDOWN) {
-		if (evt.key.keysym.sym == SDLK_ESCAPE) {
-			SDL_SetRelativeMouseMode(SDL_FALSE);
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_a) {
-			left.downs += 1;
-			left.pressed = true;
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_d) {
-			right.downs += 1;
-			right.pressed = true;
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_w) {
-			up.downs += 1;
-			up.pressed = true;
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_s) {
-			down.downs += 1;
-			down.pressed = true;
-			return true;
-		}
-	} else if (evt.type == SDL_KEYUP) {
-		if (evt.key.keysym.sym == SDLK_a) {
-			left.pressed = false;
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_d) {
-			right.pressed = false;
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_w) {
-			up.pressed = false;
-			return true;
-		} else if (evt.key.keysym.sym == SDLK_s) {
-			down.pressed = false;
-			return true;
-		}
-	} else if (evt.type == SDL_MOUSEBUTTONDOWN) {
-		if (SDL_GetRelativeMouseMode() == SDL_FALSE) {
-			SDL_SetRelativeMouseMode(SDL_TRUE);
-			return true;
-		}
+	if (evt.type == SDL_MOUSEBUTTONDOWN) {
+		return true;
 	} else if (evt.type == SDL_MOUSEMOTION) {
-		if (SDL_GetRelativeMouseMode() == SDL_TRUE) {
-			glm::vec2 motion = glm::vec2(
-				evt.motion.xrel / float(window_size.y),
-				-evt.motion.yrel / float(window_size.y)
-			);
-			camera->transform->rotation = glm::normalize(
-				camera->transform->rotation
-				* glm::angleAxis(-motion.x * camera->fovy, glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::angleAxis(motion.y * camera->fovy, glm::vec3(1.0f, 0.0f, 0.0f))
-			);
-			return true;
-		}
+		return true;
+	} else if (evt.type == SDL_KEYDOWN) {
+		if (evt.key.keysym.sym == SDLK_1) {
+			next_room_idx = 0;
+		} else if (evt.key.keysym.sym == SDLK_2) {
+			next_room_idx = 1;
+		} else if (evt.key.keysym.sym == SDLK_3) {
+			next_room_idx = 2;
+		} else if (evt.key.keysym.sym == SDLK_4) {
+			next_room_idx = 3;
+		} else if (evt.key.keysym.sym == SDLK_5) {
+			next_room_idx = 4;
+		} else if (evt.key.keysym.sym == SDLK_6) {
+			next_room_idx = 5;
+		} else if (evt.key.keysym.sym == SDLK_7) {
+			next_room_idx = 6;
+		} else if (evt.key.keysym.sym == SDLK_8) {
+			next_room_idx = 7;
+		} 
 	}
 
+	Room active_room = all_rooms[active_room_idx];
+	if (next_room_idx >= 0 && next_room_idx < active_room.neighbor_idxs.size()) {
+
+		if (active_room.translates >= 0) {
+			translation_idxs[active_room.translates] = next_room_idx + 1; 
+			printf("translation idx %d: %u\n", active_room.translates, translation_idxs[active_room.translates]);
+			all_rooms[1].descriptions = {
+				"You stare at the note that the mages told you contains the spell instructions.\nYou're sure you can reason this out.\n\n\"Place ", 
+				translated_words[0][translation_idxs[0]], " in a ", translated_words[1][translation_idxs[1]], 
+				". Add ", translated_words[2][translation_idxs[2]] , " ", translated_words[3][translation_idxs[3]], ", ", 
+						translated_words[2][translation_idxs[2]] , " ", translated_words[4][translation_idxs[4]], 
+						", and some ", translated_words[4][translation_idxs[4]], " to the ", translated_words[0][translation_idxs[0]], 
+				".\nPlace the ", translated_words[1][translation_idxs[1]], " onto the ", translated_words[5][translation_idxs[5]],
+				". ", translated_words[6][translation_idxs[6]], " the ", translated_words[5][translation_idxs[5]],
+				".\"\n\nPress a number key to investigate each purple word."
+			};
+		}
+
+		active_room_idx = active_room.neighbor_idxs[next_room_idx];
+
+		Room active_room = all_rooms[active_room_idx];
+
+		glyph_textures.clear();
+		hb_position_t start_pos_x = 0;
+		hb_position_t start_pos_y = 0;
+		for (uint8_t i = 0; i < active_room.descriptions.size(); i++) {
+			const char *desc = active_room.descriptions[i];
+			if (glyph_textures.size() > 0) {
+				start_pos_y = glyph_textures.rbegin()->end_pos_y;
+				start_pos_x = glyph_textures.rbegin()->end_pos_x;
+			} else {
+				start_pos_x = 0;
+				start_pos_y = 0;
+			}
+			std::vector<tex_struct> curr_textures = test_harfbuzz(desc, start_pos_x, start_pos_y);
+			glyph_textures.insert(glyph_textures.end(), curr_textures.begin(), curr_textures.end());
+		}
+
+		image_textures.clear();
+		for (uint8_t i = 0; i < active_room.image_paths.size(); i++) {
+			image_textures.emplace_back(init_image_tex(active_room.image_paths[i]));
+		}
+	}
 	return false;
 }
 
 void PlayMode::update(float elapsed) {
-
-	//slowly rotates through [0,1):
-	wobble += elapsed / 10.0f;
-	wobble -= std::floor(wobble);
-
-	hip->rotation = hip_base_rotation * glm::angleAxis(
-		glm::radians(5.0f * std::sin(wobble * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 1.0f, 0.0f)
-	);
-	upper_leg->rotation = upper_leg_base_rotation * glm::angleAxis(
-		glm::radians(7.0f * std::sin(wobble * 2.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-	lower_leg->rotation = lower_leg_base_rotation * glm::angleAxis(
-		glm::radians(10.0f * std::sin(wobble * 3.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-
-	//move sound to follow leg tip position:
-	leg_tip_loop->set_position(get_leg_tip_position(), 1.0f / 60.0f);
-
-	//move camera:
-	{
-
-		//combine inputs into a move:
-		constexpr float PlayerSpeed = 30.0f;
-		glm::vec2 move = glm::vec2(0.0f);
-		if (left.pressed && !right.pressed) move.x =-1.0f;
-		if (!left.pressed && right.pressed) move.x = 1.0f;
-		if (down.pressed && !up.pressed) move.y =-1.0f;
-		if (!down.pressed && up.pressed) move.y = 1.0f;
-
-		//make it so that moving diagonally doesn't go faster:
-		if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
-
-		glm::mat4x3 frame = camera->transform->make_local_to_parent();
-		glm::vec3 frame_right = frame[0];
-		//glm::vec3 up = frame[1];
-		glm::vec3 frame_forward = -frame[2];
-
-		camera->transform->position += move.x * frame_right + move.y * frame_forward;
-	}
-
-	{ //update listener to camera position:
-		glm::mat4x3 frame = camera->transform->make_local_to_parent();
-		glm::vec3 frame_right = frame[0];
-		glm::vec3 frame_at = frame[3];
-		Sound::listener.set_position_right(frame_at, frame_right, 1.0f / 60.0f);
-	}
-
-	//reset button press counters:
-	left.downs = 0;
-	right.downs = 0;
-	up.downs = 0;
-	down.downs = 0;
 }
 
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//update camera aspect ratio for drawable:
 	camera->aspect = float(drawable_size.x) / float(drawable_size.y);
 
-	//set up light type and position for lit_color_texture_program:
+	//set up light type and position for texture_program:
 	// TODO: consider using the Light(s) in the scene to do this
 	glUseProgram(lit_color_texture_program->program);
 	glUniform1i(lit_color_texture_program->LIGHT_TYPE_int, 1);
@@ -197,40 +175,21 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	glUniform3fv(lit_color_texture_program->LIGHT_ENERGY_vec3, 1, glm::value_ptr(glm::vec3(1.0f, 1.0f, 0.95f)));
 	glUseProgram(0);
 
-	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+	glClearColor(0.0f, 0.02f, 0.01f, 1.0f);
 	glClearDepth(1.0f); //1.0 is actually the default value to clear the depth buffer to, but FYI you can change it.
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_LESS); //this is the default depth comparison function, but FYI you can change it.
 
-	scene.draw(*camera);
+	// scene.draw(*camera);
 
-	{ //use DrawLines to overlay some text:
-		glDisable(GL_DEPTH_TEST);
-		float aspect = float(drawable_size.x) / float(drawable_size.y);
-		DrawLines lines(glm::mat4(
-			1.0f / aspect, 0.0f, 0.0f, 0.0f,
-			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, 0.0f,
-			0.0f, 0.0f, 0.0f, 1.0f
-		));
-
-		constexpr float H = 0.09f;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
-		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+	for (int i = 0; i < glyph_textures.size(); i++) {
+		draw_glyph(glyph_textures[i]);
 	}
-	GL_ERRORS();
-}
+	for (int i = 0; i < image_textures.size(); i++) {
+		draw_glyph(image_textures[i]);
+	}
 
-glm::vec3 PlayMode::get_leg_tip_position() {
-	//the vertex position here was read from the model in blender:
-	return lower_leg->make_local_to_world() * glm::vec4(-1.26137f, -11.861f, 0.0f, 1.0f);
+	GL_ERRORS();
 }

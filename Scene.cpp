@@ -114,21 +114,21 @@ void Scene::draw(glm::mat4 const &world_to_clip, glm::mat4x3 const &world_to_lig
 		assert(drawable.transform); //drawables *must* have a transform
 		glm::mat4x3 object_to_world = drawable.transform->make_local_to_world();
 
-		//OBJECT_TO_CLIP takes vertices from object space to clip space:
-		if (pipeline.OBJECT_TO_CLIP_mat4 != -1U) {
-			glm::mat4 object_to_clip = world_to_clip * glm::mat4(object_to_world);
-			glUniformMatrix4fv(pipeline.OBJECT_TO_CLIP_mat4, 1, GL_FALSE, glm::value_ptr(object_to_clip));
+		//CLIP_FROM_LOCAL takes vertices from object space to clip space:
+		if (pipeline.CLIP_FROM_LOCAL_mat4 != -1U) {
+			glm::mat4 CLIP_FROM_LOCAL = world_to_clip * glm::mat4(object_to_world);
+			glUniformMatrix4fv(pipeline.CLIP_FROM_LOCAL_mat4, 1, GL_FALSE, glm::value_ptr(CLIP_FROM_LOCAL));
 		}
 
 		//the object-to-light matrix is used in the next two uniforms:
 		glm::mat4x3 object_to_light = world_to_light * glm::mat4(object_to_world);
 
-		//OBJECT_TO_CLIP takes vertices from object space to light space:
+		//OBJECT_TO_LIGHT takes vertices from object space to light space:
 		if (pipeline.OBJECT_TO_LIGHT_mat4x3 != -1U) {
 			glUniformMatrix4x3fv(pipeline.OBJECT_TO_LIGHT_mat4x3, 1, GL_FALSE, glm::value_ptr(object_to_light));
 		}
 
-		//NORMAL_TO_CLIP takes normals from object space to light space:
+		//NORMAL_TO_LIGHT takes normals from object space to light space:
 		if (pipeline.NORMAL_TO_LIGHT_mat3 != -1U) {
 			glm::mat3 normal_to_light = glm::inverse(glm::transpose(glm::mat3(object_to_light)));
 			glUniformMatrix3fv(pipeline.NORMAL_TO_LIGHT_mat3, 1, GL_FALSE, glm::value_ptr(normal_to_light));

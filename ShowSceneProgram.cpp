@@ -10,7 +10,7 @@ Load< ShowSceneProgram > show_scene_program(LoadTagEarly, []() -> ShowSceneProgr
 
 	show_scene_program_pipeline.program = ret->program;
 
-	show_scene_program_pipeline.OBJECT_TO_CLIP_mat4 = ret->OBJECT_TO_CLIP_mat4;
+	show_scene_program_pipeline.CLIP_FROM_LOCAL_mat4 = ret->CLIP_FROM_LOCAL_mat4;
 	show_scene_program_pipeline.OBJECT_TO_LIGHT_mat4x3 = ret->OBJECT_TO_LIGHT_mat4x3;
 	show_scene_program_pipeline.NORMAL_TO_LIGHT_mat3 = ret->NORMAL_TO_LIGHT_mat3;
 
@@ -22,7 +22,7 @@ ShowSceneProgram::ShowSceneProgram() {
 	program = gl_compile_program(
 		//vertex shader:
 		"#version 330\n"
-		"uniform mat4 OBJECT_TO_CLIP;\n"
+		"uniform mat4 CLIP_FROM_LOCAL;\n"
 		"uniform mat4x3 OBJECT_TO_LIGHT;\n"
 		"uniform mat3 NORMAL_TO_LIGHT;\n"
 		"in vec4 Position;\n"
@@ -34,7 +34,7 @@ ShowSceneProgram::ShowSceneProgram() {
 		"out vec4 color;\n"
 		"out vec2 texCoord;\n"
 		"void main() {\n"
-		"	gl_Position = OBJECT_TO_CLIP * Position;\n"
+		"	gl_Position = CLIP_FROM_LOCAL * Position;\n"
 		"	position = OBJECT_TO_LIGHT * Position;\n"
 		"	normal = NORMAL_TO_LIGHT * Normal;\n"
 		"	color = Color;\n"
@@ -80,7 +80,7 @@ ShowSceneProgram::ShowSceneProgram() {
 	TexCoord_vec2 = glGetAttribLocation(program, "TexCoord");
 
 	//look up the locations of uniforms:
-	OBJECT_TO_CLIP_mat4 = glGetUniformLocation(program, "OBJECT_TO_CLIP");
+	CLIP_FROM_LOCAL_mat4 = glGetUniformLocation(program, "CLIP_FROM_LOCAL");
 	OBJECT_TO_LIGHT_mat4x3 = glGetUniformLocation(program, "OBJECT_TO_LIGHT");
 	NORMAL_TO_LIGHT_mat3 = glGetUniformLocation(program, "NORMAL_TO_LIGHT");
 
