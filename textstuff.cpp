@@ -233,6 +233,7 @@ tex_struct init_glyph_tex (hb_codepoint_t glyphid, float x_pos, float y_pos) {
     return glyph_tex;
 };
 
+// code in init_glyph_tex adapted from the OpenGL texture rendering lesson in class.
 tex_struct init_image_tex(std::string image_path) {
     tex_struct image_tex;
 
